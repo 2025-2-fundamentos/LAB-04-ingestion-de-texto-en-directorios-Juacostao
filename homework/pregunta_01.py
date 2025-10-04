@@ -71,3 +71,97 @@ def pregunta_01():
 
 
     """
+# pylint: disable=import-outside-toplevel
+# pylint: disable=line-too-long
+# flake8: noqa
+"""
+Laboratorio 4 - Ingestión de texto en directorios
+
+Objetivo:
+Leer archivos de texto desde carpetas organizadas por sentimiento
+y crear dos datasets CSV: train_dataset.csv y test_dataset.csv
+"""
+
+from pathlib import Path
+import zipfile
+import pandas as pd
+
+def pregunta_01():
+    repo_root = Path(__file__).resolve().parent.parent
+    files_dir = repo_root / "files"
+    zip_path = files_dir / "input.zip"
+    input_dir = files_dir / "input"
+    output_dir = files_dir / "output"
+
+    # Extraer ZIP si la carpeta input no existe y el ZIP sí existe
+    if not input_dir.exists() and zip_path.exists():
+        with zipfile.ZipFile(zip_path, "r") as z:
+            z.extractall(files_dir)
+
+    # Si aún no existe input_dir, intentar localizar una carpeta 'input' en el repo
+    if not input_dir.exists():
+        candidates = list(repo_root.rglob("input"))
+        input_dir = candidates[0] if candidates else input_dir
+
+    # Si no existe, buscar padre que contenga 'train' y 'test'
+    if not input_dir.exists():
+        found = None
+        for d in repo_root.rglob("*"):
+            if not d.is_dir():
+                continue
+            try:
+                names = {p.name for p in d.iterdir() if p.is_dir()}
+            except Exception:
+                continue
+            if {"train", "test"}.issubset(names):
+                found = d
+                break
+        if found:
+            input_dir = found
+
+    # Si finalmente no existe, lanzar error claro
+    if not input_dir.exists():
+        raise FileNotFoundError(
+            "No se encontró 'files/input' ni 'files/input.zip'. Coloca input.zip en files/ o la carpeta input/ descomprimida."
+        )
+
+    # Función para construir dataset (train o test)
+    def build_dataset(split: str) -> pd.DataFrame:
+        split_dir = input_dir / split
+
+        # intentar localizar si no está exactamente ahí
+        if not split_dir.exists():
+            alt = None
+            for cand in input_dir.rglob(split):
+                if cand.is_dir():
+                    alt = cand
+                    break
+            if alt:
+                split_dir = alt
+
+        rows = []
+        if not split_dir.exists():
+            return pd.DataFrame(columns=["phrase", "target"])
+
+        # recorrer las carpetas de sentimiento en orden alfabético (determinista)
+        for sentiment_dir in sorted([p for p in split_dir.iterdir() if p.is_dir()], key=lambda p: p.name):
+            target = sentiment_dir.name
+            # leer archivos .txt en orden
+            for txt in sorted(sentiment_dir.glob("*.txt"), key=lambda p: p.name):
+                try:
+                    text = txt.read_text(encoding="utf-8")
+                except Exception:
+                    text = txt.read_text(encoding="latin-1", errors="ignore")
+                rows.append({"phrase": text.strip(), "target": target})
+
+        return pd.DataFrame(rows, columns=["phrase", "target"])
+
+    # Construir y guardar datasets
+    train_df = build_dataset("train")
+    test_df = build_dataset("test")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    train_df.to_csv(output_dir / "train_dataset.csv", index=False)
+    test_df.to_csv(output_dir / "test_dataset.csv", index=False)
+
+    return
